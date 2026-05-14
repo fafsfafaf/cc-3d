@@ -1,6 +1,6 @@
 'use client';
 import { useRef, useEffect, useMemo } from 'react';
-import { useFrame, useThree, createPortal } from '@react-three/fiber';
+import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
 type Props = {
@@ -10,10 +10,7 @@ type Props = {
 
 const ROPE_SEGMENTS = 16;
 
-// Minecraft-style first-person hand rendered in a SEPARATE scene + camera
-// over the main view. This is the same trick Minecraft and FPS games use:
-// the viewmodel is in its own render pass so it never clips into the world,
-// is never occluded by walls, and renders at a constant size on screen.
+// First-person hand. Optionally equipped with a thick voxel-style lasso/whip.
 export default function HandViewModel({ enabled, whipEquipped }: Props) {
   const handRef = useRef<THREE.Group>(null);
   const ropeRef = useRef<THREE.Mesh>(null);
@@ -21,30 +18,7 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
   const tipFlashRef = useRef<THREE.Mesh>(null);
   const crackUntil = useRef(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
-  const { gl, scene: mainScene, camera: mainCamera, size } = useThree();
-
-  // Dedicated scene + camera for the viewmodel
-  const viewmodelScene = useMemo(() => {
-    const s = new THREE.Scene();
-    // Bright lighting for the hand so it always looks lit (independent of world lights)
-    const ambient = new THREE.AmbientLight(0xffffff, 1.4);
-    const dir = new THREE.DirectionalLight(0xffe8c0, 1.2);
-    dir.position.set(2, 3, 2);
-    s.add(ambient, dir);
-    return s;
-  }, []);
-  const viewmodelCamera = useMemo(() => {
-    const c = new THREE.PerspectiveCamera(55, 1, 0.01, 10);
-    c.position.set(0, 0, 0);
-    return c;
-  }, []);
-
-  // Keep viewmodel camera aspect in sync with the main canvas
-  useEffect(() => {
-    if (!size) return;
-    viewmodelCamera.aspect = size.width / size.height;
-    viewmodelCamera.updateProjectionMatrix();
-  }, [size, viewmodelCamera]);
+  const { camera, gl } = useThree();
 
   // Reusable curve we update every frame
   const curve = useMemo(() => {
@@ -53,7 +27,7 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
     return new THREE.CatmullRomCurve3(points);
   }, []);
 
-  // Whip-crack sound on click
+  // Whip-crack sound (only when whip equipped)
   useEffect(() => {
     if (!enabled || !whipEquipped) return;
     const playWhipCrack = () => {
@@ -116,17 +90,27 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
     return () => dom.removeEventListener('click', onClick);
   }, [enabled, whipEquipped, gl]);
 
-  // Render the viewmodel scene OVER the main scene every frame
-  useFrame(() => {
-    if (!enabled) return;
+  useFrame((state) => {
+    const g = handRef.current;
+    if (!g || !enabled) return;
 
-    // Animate whip rope
+    g.position.copy(camera.position);
+    g.quaternion.copy(camera.quaternion);
+
+    // Hand offset bottom-right of view
+    g.translateX(0.4);
+    g.translateY(-0.45);
+    g.translateZ(-0.7);
+    g.rotateY(-0.16);
+    g.rotateX(-0.12);
+
     if (whipEquipped && ropeRef.current) {
-      const t = performance.now() / 1000;
+      const t = state.clock.elapsedTime;
       const crackT = Math.max(0, crackUntil.current - t);
       const cracking = crackT > 0;
       const phase = cracking ? 1 - crackT / 0.45 : 0;
 
+      // Compute curve points (relative to handle base at -0.85 below hand origin)
       const points = curve.points;
       let tipX = 0, tipY = 0, tipZ = 0;
       for (let i = 0; i <= ROPE_SEGMENTS; i++) {
@@ -140,6 +124,7 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
           y = -0.3 + Math.sin(angle) * radius * (snap * 0.7 + 0.3);
           z = Math.cos(angle) * radius * -1;
         } else {
+          // Hangs forward + down with gentle sway
           x = Math.sin(t * 0.6 + p * 3) * 0.03 * (1 - p);
           y = -0.2 - p * p * 1.4 - Math.sin(t * 0.8 + p * 6) * 0.04 * (1 - p);
           z = -p * 0.55 - Math.cos(t * 0.5 + p * 3) * 0.04 * (1 - p);
@@ -149,10 +134,12 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
       }
       curve.updateArcLengths();
 
-      const newGeo = new THREE.TubeGeometry(curve, ROPE_SEGMENTS * 2, 0.04, 8, false);
+      // Build a fresh tube geometry (cheap at 16 segments)
+      const tubeGeo = new THREE.TubeGeometry(curve, ROPE_SEGMENTS * 2, 0.03, 6, false);
       ropeRef.current.geometry.dispose();
-      ropeRef.current.geometry = newGeo;
+      ropeRef.current.geometry = tubeGeo;
 
+      // Position the lasso loop at the tip
       if (lassoRef.current) {
         lassoRef.current.position.set(tipX, tipY - 0.08, tipZ);
         lassoRef.current.rotation.x = -0.4 + Math.sin(t * 0.7) * 0.1;
@@ -160,6 +147,8 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
         const scl = cracking ? 0.7 + Math.sin(phase * Math.PI) * 0.5 : 1.0;
         lassoRef.current.scale.setScalar(scl);
       }
+
+      // Tip flash on crack
       if (tipFlashRef.current) {
         tipFlashRef.current.position.set(tipX, tipY, tipZ);
         const flash = cracking && phase > 0.4 && phase < 0.55 ? 1 : 0;
@@ -167,90 +156,81 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
         tipFlashRef.current.scale.setScalar(0.5 + flash * 1.5);
       }
     }
+  });
 
-    // Render viewmodel scene OVER main scene
-    gl.autoClear = false;
-    gl.clearDepth();
-    gl.render(viewmodelScene, viewmodelCamera);
-    gl.autoClear = true;
-  }, 100); // priority 100 = render after the default scene
-
-  // Pull camera + scene from main view; render hand into the dedicated scene
-  // via createPortal so React-Three-Fiber tree manages the meshes for us.
   if (!enabled) return null;
 
-  return createPortal(
-    <group ref={handRef} position={[0.55, -0.42, -0.85]} scale={1.0} frustumCulled={false}>
+  return (
+    <group ref={handRef} renderOrder={999} scale={1.6}>
       {/* Forearm */}
-      <mesh frustumCulled={false} rotation={[0.2, 0, -0.1]} position={[0, -0.1, 0]}>
+      <mesh position={[0, -0.25, 0]}>
         <boxGeometry args={[0.18, 0.55, 0.18]} />
-        <meshStandardMaterial color="#e8c8a8" roughness={0.7} flatShading />
+        <meshStandardMaterial color="#e8c8a8" roughness={0.7} flatShading depthTest={false} />
       </mesh>
       {/* Sleeve cuff */}
-      <mesh frustumCulled={false} position={[0, 0.18, 0]}>
+      <mesh position={[0, 0.05, 0]}>
         <boxGeometry args={[0.21, 0.14, 0.21]} />
-        <meshStandardMaterial color="#5a8fff" roughness={0.85} flatShading />
+        <meshStandardMaterial color="#5a8fff" roughness={0.85} flatShading depthTest={false} />
       </mesh>
       {/* Hand */}
-      <mesh frustumCulled={false} position={[0.02, -0.4, 0.02]}>
+      <mesh position={[0, -0.6, 0.02]}>
         <boxGeometry args={[0.24, 0.22, 0.22]} />
-        <meshStandardMaterial color="#e8c8a8" roughness={0.7} flatShading />
+        <meshStandardMaterial color="#e8c8a8" roughness={0.7} flatShading depthTest={false} />
       </mesh>
       {/* Thumb */}
-      <mesh frustumCulled={false} position={[0.18, -0.36, 0.04]}>
+      <mesh position={[0.16, -0.55, 0.04]}>
         <boxGeometry args={[0.09, 0.18, 0.13]} />
-        <meshStandardMaterial color="#d8b898" roughness={0.7} flatShading />
+        <meshStandardMaterial color="#d8b898" roughness={0.7} flatShading depthTest={false} />
       </mesh>
       {/* Knuckle ridge */}
-      <mesh frustumCulled={false} position={[0.02, -0.5, 0.13]}>
+      <mesh position={[0, -0.7, 0.13]}>
         <boxGeometry args={[0.22, 0.04, 0.02]} />
-        <meshStandardMaterial color="#c8a888" roughness={0.7} flatShading />
+        <meshStandardMaterial color="#c8a888" roughness={0.7} flatShading depthTest={false} />
       </mesh>
 
       {whipEquipped && (
         <>
-          {/* Whip handle (held in hand, points outward) */}
-          <mesh frustumCulled={false} position={[0.02, -0.55, 0.18]} rotation={[0.7, 0, 0]}>
-            <cylinderGeometry args={[0.06, 0.05, 0.45, 10]} />
-            <meshStandardMaterial color="#6b3e2a" roughness={0.6} flatShading />
+          {/* Whip handle (held in hand) */}
+          <mesh position={[0, -0.78, 0.08]} rotation={[0.4, 0, 0]}>
+            <cylinderGeometry args={[0.055, 0.045, 0.4, 8]} />
+            <meshStandardMaterial color="#6b3e2a" roughness={0.6} flatShading depthTest={false} />
           </mesh>
           {/* Handle wraps */}
-          <mesh frustumCulled={false} position={[0.02, -0.45, 0.07]} rotation={[0.7, 0, 0]}>
-            <cylinderGeometry args={[0.065, 0.065, 0.04, 10]} />
-            <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading />
+          <mesh position={[0, -0.7, 0.05]} rotation={[0.4, 0, 0]}>
+            <cylinderGeometry args={[0.062, 0.062, 0.04, 8]} />
+            <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
           </mesh>
-          <mesh frustumCulled={false} position={[0.02, -0.62, 0.27]} rotation={[0.7, 0, 0]}>
-            <cylinderGeometry args={[0.065, 0.065, 0.04, 10]} />
-            <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading />
+          <mesh position={[0, -0.85, 0.12]} rotation={[0.4, 0, 0]}>
+            <cylinderGeometry args={[0.062, 0.062, 0.04, 8]} />
+            <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
           </mesh>
-          {/* Pommel (golden ball) */}
-          <mesh frustumCulled={false} position={[0.02, -0.4, 0]}>
-            <sphereGeometry args={[0.075, 14, 14]} />
-            <meshStandardMaterial color="#d4a878" emissive="#d4a878" emissiveIntensity={0.25} roughness={0.4} flatShading />
+          {/* Pommel (golden ball at handle end) */}
+          <mesh position={[0, -0.62, 0.02]}>
+            <sphereGeometry args={[0.07, 12, 12]} />
+            <meshStandardMaterial color="#d4a878" emissive="#d4a878" emissiveIntensity={0.2} roughness={0.4} flatShading depthTest={false} />
           </mesh>
 
-          {/* The whip rope — origin at the handle tip, hangs forward + down */}
-          <group position={[0.02, -0.7, 0.35]}>
-            <mesh ref={ropeRef} frustumCulled={false}>
-              <tubeGeometry args={[curve, ROPE_SEGMENTS * 2, 0.04, 8, false]} />
-              <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading />
+          {/* Whip rope — actual 3D tube (not a line!) */}
+          <group position={[0, -0.95, 0.15]}>
+            <mesh ref={ropeRef}>
+              <tubeGeometry args={[curve, ROPE_SEGMENTS * 2, 0.03, 6, false]} />
+              <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
             </mesh>
 
             {/* Lasso loop at the tip */}
-            <mesh ref={lassoRef} frustumCulled={false} position={[0, -1.4, -0.5]}>
-              <torusGeometry args={[0.2, 0.03, 8, 24]} />
-              <meshStandardMaterial color="#4a2e1c" roughness={0.7} flatShading />
+            <mesh ref={lassoRef} position={[0, -1.4, -0.5]}>
+              <torusGeometry args={[0.18, 0.025, 6, 20]} />
+              <meshStandardMaterial color="#4a2e1c" roughness={0.7} flatShading depthTest={false} />
             </mesh>
 
-            {/* Tip flash on crack */}
-            <mesh ref={tipFlashRef} frustumCulled={false} position={[0, 0, 0]}>
-              <sphereGeometry args={[0.08, 10, 10]} />
-              <meshBasicMaterial color="#ffffff" transparent opacity={0} />
+            {/* Tip flash (only visible during crack) */}
+            <mesh ref={tipFlashRef} position={[0, 0, 0]}>
+              <sphereGeometry args={[0.06, 8, 8]} />
+              <meshBasicMaterial color="#ffffff" transparent opacity={0} depthTest={false} />
             </mesh>
           </group>
         </>
       )}
-    </group>,
-    viewmodelScene,
+    </group>
   );
 }
