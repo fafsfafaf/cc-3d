@@ -18,14 +18,13 @@ type Props = {
   pulses: Record<string, number>;
   bubbles: Record<string, { text: string; key: number }>;
   camMode: CamMode;
-  whipEquipped: boolean;
 };
 
 const ROOM_SIZE: [number, number, number] = [16, 8, 14];
 const ROOM_OFFSET = 11;
 const FLOOR_Y = -3.18;
 
-export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles, camMode, whipEquipped }: Props) {
+export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles, camMode }: Props) {
   return (
     <Canvas
       shadows={false}
@@ -93,7 +92,7 @@ export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles,
         />
       )}
       {camMode !== 'orbit' && <FreeCameraControls enabled={true} walkMode={camMode === 'walk'} />}
-      <HandViewModel enabled={camMode === 'walk'} whipEquipped={whipEquipped} />
+      <HandViewModel enabled={camMode === 'walk'} />
     </Canvas>
   );
 }
