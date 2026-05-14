@@ -7,6 +7,7 @@ import type { Session } from '@/lib/useSessions';
 import VoxelAgent from './VoxelAgent';
 import VoxelSubagent from './VoxelSubagent';
 import FreeCameraControls from './FreeCameraControls';
+import HandViewModel from './HandViewModel';
 
 type CamMode = 'orbit' | 'fly' | 'walk';
 
@@ -91,6 +92,7 @@ export default function Scene({ sessions, selectedId, onSelect, pulses, camMode 
         />
       )}
       {camMode !== 'orbit' && <FreeCameraControls enabled={true} walkMode={camMode === 'walk'} />}
+      <HandViewModel enabled={camMode === 'walk'} />
     </Canvas>
   );
 }
