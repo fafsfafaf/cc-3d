@@ -13,7 +13,7 @@ export type Subagent = {
 export type Session = {
   sessionId: string;
   projectName: string;
-  cwd: string;
+  cwd: string | null;
   model: string;
   gitBranch: string | null;
   status: 'active' | 'idle' | 'done';
@@ -25,6 +25,11 @@ export type Session = {
   tokens: { input: number; output: number; cacheRead: number; cacheCreation: number };
   eventCount: number;
   subagents: Subagent[];
+  // External agents (n8n bots, marketing AI, etc.) set these:
+  isExternal?: boolean;
+  externalKind?: string;
+  label?: string;
+  currentTask?: string | null;
 };
 
 export type LogEntry = {

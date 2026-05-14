@@ -91,6 +91,50 @@ canvas { display: block; outline: none; }
 .cam-btn:hover { background: rgba(255, 179, 71, 0.1); color: #ffb347; }
 .cam-btn.on { background: rgba(255, 179, 71, 0.18); color: #ffb347; }
 .cam-btn + .cam-btn { border-left: 1px solid rgba(120, 160, 220, 0.18); }
+
+.search-bar {
+  position: absolute;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 520px;
+  max-width: 90%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(8, 12, 20, 0.92);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 179, 71, 0.45);
+  border-radius: 12px;
+  padding: 10px 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.search-bar input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  color: #f4f8ff;
+  font-size: 14px;
+  outline: none;
+  font-family: inherit;
+}
+.search-bar input::placeholder { color: #6c7e96; }
+.search-bar .search-count {
+  font-size: 11px;
+  color: #ffb347;
+  padding: 3px 9px;
+  background: rgba(255, 179, 71, 0.15);
+  border-radius: 999px;
+}
+
+.help-card code {
+  font-family: 'JetBrains Mono', 'Consolas', monospace;
+  background: rgba(120, 160, 220, 0.12);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  color: #ffb347;
+}
 .notif-btn .dot {
   width: 8px; height: 8px; border-radius: 999px;
   background: currentColor;

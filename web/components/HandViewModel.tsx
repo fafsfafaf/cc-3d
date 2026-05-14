@@ -1,5 +1,5 @@
 'use client';
-import { useRef } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 
@@ -7,26 +7,157 @@ type Props = {
   enabled: boolean;
 };
 
-// Static Minecraft-style first-person hand attached to the camera.
-// Bigger, more visible, no animation.
+// Minecraft-style first-person hand holding a whip/lasso.
+// Click = crack animation + synthesized whip-crack sound.
 export default function HandViewModel({ enabled }: Props) {
   const handRef = useRef<THREE.Group>(null);
-  const { camera } = useThree();
+  const whipRef = useRef<THREE.Group>(null);
+  const ropeMatRef = useRef<THREE.LineBasicMaterial>(null);
+  const tipRef = useRef<THREE.Mesh>(null);
+  const crackUntil = useRef(0);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const { camera, gl } = useThree();
 
-  useFrame(() => {
+  // Build a curved whip line geometry
+  const segments = 24;
+  const ropePoints = useMemo(() => {
+    const arr: THREE.Vector3[] = [];
+    for (let i = 0; i <= segments; i++) arr.push(new THREE.Vector3());
+    return arr;
+  }, []);
+
+  const ropeGeom = useMemo(() => new THREE.BufferGeometry().setFromPoints(ropePoints), [ropePoints]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const playWhipCrack = () => {
+      try {
+        if (!audioCtxRef.current) {
+          const Ctx = window.AudioContext || (window as any).webkitAudioContext;
+          if (!Ctx) return;
+          audioCtxRef.current = new Ctx();
+        }
+        const ctx = audioCtxRef.current;
+        if (ctx.state === 'suspended') ctx.resume();
+
+        // 1) Whoosh — short noise burst with descending bandpass filter (the wind-up)
+        const whooshLen = 0.18;
+        const noiseBuf = ctx.createBuffer(1, ctx.sampleRate * whooshLen, ctx.sampleRate);
+        const data = noiseBuf.getChannelData(0);
+        for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / data.length);
+        const noiseSrc = ctx.createBufferSource();
+        noiseSrc.buffer = noiseBuf;
+        const bp = ctx.createBiquadFilter();
+        bp.type = 'bandpass';
+        bp.frequency.setValueAtTime(2400, ctx.currentTime);
+        bp.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + whooshLen);
+        bp.Q.value = 6;
+        const noiseGain = ctx.createGain();
+        noiseGain.gain.setValueAtTime(0.0, ctx.currentTime);
+        noiseGain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + 0.04);
+        noiseGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + whooshLen);
+        noiseSrc.connect(bp).connect(noiseGain).connect(ctx.destination);
+        noiseSrc.start();
+        noiseSrc.stop(ctx.currentTime + whooshLen);
+
+        // 2) Crack — sharp transient at the end (the actual whip-crack)
+        const crackStart = ctx.currentTime + whooshLen - 0.01;
+        const crackLen = 0.06;
+        const crackBuf = ctx.createBuffer(1, ctx.sampleRate * crackLen, ctx.sampleRate);
+        const cd = crackBuf.getChannelData(0);
+        for (let i = 0; i < cd.length; i++) {
+          const env = Math.exp(-i / (ctx.sampleRate * 0.008));
+          cd[i] = (Math.random() * 2 - 1) * env;
+        }
+        const crackSrc = ctx.createBufferSource();
+        crackSrc.buffer = crackBuf;
+        const hp = ctx.createBiquadFilter();
+        hp.type = 'highpass';
+        hp.frequency.value = 1500;
+        const crackGain = ctx.createGain();
+        crackGain.gain.setValueAtTime(0.85, crackStart);
+        crackGain.gain.exponentialRampToValueAtTime(0.001, crackStart + crackLen);
+        crackSrc.connect(hp).connect(crackGain).connect(ctx.destination);
+        crackSrc.start(crackStart);
+        crackSrc.stop(crackStart + crackLen);
+      } catch {
+        // ignore audio errors silently
+      }
+    };
+
+    const onClick = () => {
+      crackUntil.current = performance.now() / 1000 + 0.45;
+      playWhipCrack();
+    };
+    const dom = gl.domElement;
+    dom.addEventListener('click', onClick);
+    return () => dom.removeEventListener('click', onClick);
+  }, [enabled, gl]);
+
+  useFrame((state) => {
     const g = handRef.current;
     if (!g || !enabled) return;
 
+    // Anchor hand to camera bottom-right
     g.position.copy(camera.position);
     g.quaternion.copy(camera.quaternion);
-
-    // Larger offset: closer + lower-right + slightly bigger angle
     g.translateX(0.55);
     g.translateY(-0.55);
     g.translateZ(-0.85);
-
     g.rotateY(-0.18);
     g.rotateX(-0.15);
+
+    // Whip rope animation
+    const t = state.clock.elapsedTime;
+    const crackT = Math.max(0, crackUntil.current - t);
+    const cracking = crackT > 0;
+    const phase = cracking ? 1 - crackT / 0.45 : 0; // 0..1 during crack
+
+    if (whipRef.current) {
+      const positions = ropeGeom.attributes.position;
+      // Whip hangs from the handle (local origin) and curves out forward.
+      // During crack: whip extends forward and snaps back like a bullwhip.
+      for (let i = 0; i <= segments; i++) {
+        const p = i / segments;
+        const idle = {
+          x: 0,
+          y: -0.4 - p * 0.9 - Math.sin(t * 0.8 + p * 6) * 0.04 * (1 - p),
+          z: -p * 0.15 - Math.sin(t * 0.6 + p * 4) * 0.03 * (1 - p),
+        };
+        let pos = idle;
+        if (cracking) {
+          // Snap-out: tip goes far forward+up, then back
+          const snap = Math.sin(phase * Math.PI); // 0..1..0
+          const followP = Math.max(0, p * 1.2 - phase * 0.4); // tip leads
+          const angle = -1.4 - followP * 1.5;
+          const radius = 0.4 + p * 1.6 + snap * 0.4 * p;
+          pos = {
+            x: Math.sin(t * 22 + p * 12) * 0.04 * snap * p,
+            y: -0.3 + Math.sin(angle) * radius * (snap * 0.7 + 0.3),
+            z: Math.cos(angle) * radius * -1,
+          };
+          // Crack flash at the tip moment
+          if (i === segments && tipRef.current) {
+            const flash = phase > 0.4 && phase < 0.55 ? 1 : 0;
+            (tipRef.current.material as THREE.MeshBasicMaterial).opacity = flash * 0.9;
+            tipRef.current.scale.setScalar(0.5 + flash * 1.2);
+          }
+        } else if (i === segments && tipRef.current) {
+          (tipRef.current.material as THREE.MeshBasicMaterial).opacity = 0;
+        }
+        ropePoints[i].set(pos.x, pos.y, pos.z);
+        positions.setXYZ(i, pos.x, pos.y, pos.z);
+        // Update tip position
+        if (i === segments && tipRef.current) {
+          tipRef.current.position.set(pos.x, pos.y, pos.z);
+        }
+      }
+      positions.needsUpdate = true;
+      ropeGeom.computeBoundingSphere();
+      if (ropeMatRef.current) {
+        ropeMatRef.current.opacity = cracking ? 1.0 : 0.95;
+      }
+    }
   });
 
   if (!enabled) return null;
@@ -53,10 +184,38 @@ export default function HandViewModel({ enabled }: Props) {
         <boxGeometry args={[0.09, 0.18, 0.13]} />
         <meshStandardMaterial color="#d8b898" roughness={0.7} flatShading depthTest={false} />
       </mesh>
-      {/* Fingernail / knuckle ridge for extra definition */}
-      <mesh position={[0, -0.7, 0.13]}>
-        <boxGeometry args={[0.22, 0.04, 0.02]} />
-        <meshStandardMaterial color="#c8a888" roughness={0.7} flatShading depthTest={false} />
+
+      {/* Whip handle (held in hand) */}
+      <mesh position={[0, -0.7, 0.05]}>
+        <boxGeometry args={[0.1, 0.32, 0.1]} />
+        <meshStandardMaterial color="#6b3e2a" roughness={0.6} flatShading depthTest={false} />
+      </mesh>
+      {/* Handle wrap (darker stripes) */}
+      <mesh position={[0, -0.8, 0.06]}>
+        <boxGeometry args={[0.11, 0.04, 0.11]} />
+        <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
+      </mesh>
+      <mesh position={[0, -0.7, 0.06]}>
+        <boxGeometry args={[0.11, 0.04, 0.11]} />
+        <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
+      </mesh>
+      {/* Pommel */}
+      <mesh position={[0, -0.92, 0.05]}>
+        <boxGeometry args={[0.12, 0.06, 0.12]} />
+        <meshStandardMaterial color="#caa078" roughness={0.5} flatShading depthTest={false} />
+      </mesh>
+
+      {/* The whip rope — thick line that snaps on crack */}
+      <group ref={whipRef} position={[0, -0.85, 0.05]}>
+        <line>
+          <primitive attach="geometry" object={ropeGeom} />
+          <lineBasicMaterial ref={ropeMatRef} attach="material" color="#2a1810" linewidth={3} transparent opacity={0.95} depthTest={false} />
+        </line>
+      </group>
+      {/* Tip flash (only visible during crack) */}
+      <mesh ref={tipRef} position={[0, 0, 0]} renderOrder={1000}>
+        <sphereGeometry args={[0.04, 8, 8]} />
+        <meshBasicMaterial color="#ffffff" transparent opacity={0} depthTest={false} />
       </mesh>
     </group>
   );

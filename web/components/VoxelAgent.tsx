@@ -3,6 +3,7 @@ import { useRef, useMemo } from 'react';
 import { useFrame, ThreeEvent } from '@react-three/fiber';
 import { Text, Billboard } from '@react-three/drei';
 import * as THREE from 'three';
+import SpeechBubble from './SpeechBubble';
 
 type Props = {
   position: [number, number, number];
@@ -15,6 +16,9 @@ type Props = {
   onClick: () => void;
   subagentBadge?: number;
   lastEventLabel?: string;
+  bubbleText?: string | null;
+  bubbleKey?: number;
+  externalKind?: string | null;
 };
 
 // Deterministic colors from sessionId
@@ -37,7 +41,18 @@ function colorsFor(sessionId: string) {
   };
 }
 
-function hatFor(model: string) {
+function hatFor(model: string, externalKind?: string | null) {
+  // External agents have hats based on their kind (marketing/code/review/etc.)
+  if (externalKind) {
+    const k = externalKind.toLowerCase();
+    if (k.includes('market')) return { color: '#ff5ec3', kind: 'cap' };
+    if (k.includes('code') || k.includes('dev')) return { color: '#5a8fff', kind: 'cap' };
+    if (k.includes('review') || k.includes('audit')) return { color: '#6cffb0', kind: 'bandana' };
+    if (k.includes('data') || k.includes('analyt')) return { color: '#c08bff', kind: 'cap' };
+    if (k.includes('design')) return { color: '#ffe156', kind: 'bandana' };
+    if (k.includes('support')) return { color: '#5cd6ff', kind: 'cap' };
+    return { color: '#aaa', kind: 'cap' };
+  }
   if (!model) return null;
   if (model.includes('opus')) return { color: '#ffb347', kind: 'crown' };
   if (model.includes('sonnet')) return { color: '#5a8fff', kind: 'cap' };
@@ -56,6 +71,9 @@ export default function VoxelAgent({
   onClick,
   subagentBadge,
   lastEventLabel,
+  bubbleText,
+  bubbleKey,
+  externalKind,
 }: Props) {
   const ref = useRef<THREE.Group>(null);
   const armLRef = useRef<THREE.Group>(null);
@@ -64,10 +82,10 @@ export default function VoxelAgent({
   const auraRef = useRef<THREE.Mesh>(null);
   const bodyEmissiveRef = useRef<THREE.MeshStandardMaterial>(null);
   const colors = useMemo(() => colorsFor(sessionId), [sessionId]);
-  const hat = useMemo(() => hatFor(model || ''), [model]);
+  const hat = useMemo(() => hatFor(model || '', externalKind), [model, externalKind]);
   const seed = useMemo(() => (hashStr(sessionId) % 1000) / 1000, [sessionId]);
 
-  useFrame((state, delta) => {
+  useFrame((state) => {
     if (!ref.current) return;
     const t = state.clock.elapsedTime + seed * 100;
 
@@ -247,7 +265,7 @@ export default function VoxelAgent({
           {projectName.length > 16 ? projectName.slice(0, 15) + '…' : projectName}
         </Text>
         <Text fontSize={0.1} color={status === 'active' ? '#ffb347' : '#7eb6ff'} anchorX="center" anchorY="middle" position={[0, -0.18, 0]} outlineWidth={0.008} outlineColor="#000">
-          {sessionId.slice(0, 8)}
+          {externalKind ? externalKind.toUpperCase() : sessionId.slice(0, 8)}
         </Text>
         {selected && lastEventLabel ? (
           <Text fontSize={0.085} color="#cdd9ec" anchorX="center" anchorY="middle" position={[0, -0.34, 0]} maxWidth={3} outlineWidth={0.006} outlineColor="#000">
@@ -255,6 +273,9 @@ export default function VoxelAgent({
           </Text>
         ) : null}
       </Billboard>
+
+      {/* Speech bubble on tool calls */}
+      <SpeechBubble text={bubbleText || null} triggerKey={bubbleKey || 0} />
     </group>
   );
 }

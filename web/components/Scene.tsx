@@ -16,6 +16,7 @@ type Props = {
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   pulses: Record<string, number>;
+  bubbles: Record<string, { text: string; key: number }>;
   camMode: CamMode;
 };
 
@@ -23,7 +24,7 @@ const ROOM_SIZE: [number, number, number] = [16, 8, 14];
 const ROOM_OFFSET = 11;
 const FLOOR_Y = -3.18;
 
-export default function Scene({ sessions, selectedId, onSelect, pulses, camMode }: Props) {
+export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles, camMode }: Props) {
   return (
     <Canvas
       shadows={false}
@@ -62,12 +63,10 @@ export default function Scene({ sessions, selectedId, onSelect, pulses, camMode 
         sideOuter="right"
       />
 
-      {/* Connecting bridge floor (where agents walk between rooms) */}
       <mesh position={[0, -3.99, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[ROOM_OFFSET * 2 - ROOM_SIZE[0], ROOM_SIZE[2]]} />
         <meshStandardMaterial color="#6c7a8c" roughness={0.92} />
       </mesh>
-      {/* Bridge accent line on floor */}
       <mesh position={[0, -3.985, 0]} rotation={[-Math.PI / 2, 0, 0]}>
         <planeGeometry args={[ROOM_OFFSET * 2 - ROOM_SIZE[0], 0.4]} />
         <meshBasicMaterial color="#9eafc4" />
@@ -78,6 +77,7 @@ export default function Scene({ sessions, selectedId, onSelect, pulses, camMode 
         selectedId={selectedId}
         onSelect={onSelect}
         pulses={pulses}
+        bubbles={bubbles}
       />
 
       {camMode === 'orbit' && (
@@ -169,18 +169,20 @@ function Room({
   );
 }
 
-// Each agent gets a "home slot" assigned per status. When status flips,
-// the home target moves smoothly to the new room — VoxelAgent walks there.
+// Project-clustered layout: agents from the same project group together,
+// each cluster gets its own little area inside the room with a floor label.
 function AgentWorld({
   sessions,
   selectedId,
   onSelect,
   pulses,
+  bubbles,
 }: {
   sessions: Session[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   pulses: Record<string, number>;
+  bubbles: Record<string, { text: string; key: number }>;
 }) {
   const visible = useMemo(
     () => sessions.filter((s) => s.status === 'active' || s.status === 'idle'),
@@ -189,27 +191,45 @@ function AgentWorld({
   const active = useMemo(() => visible.filter((s) => s.status === 'active'), [visible]);
   const idle = useMemo(() => visible.filter((s) => s.status === 'idle'), [visible]);
 
-  const activePos = useMemo(() => layoutAgents(active.length, ROOM_SIZE), [active.length]);
-  const idlePos = useMemo(() => layoutAgents(idle.length, ROOM_SIZE), [idle.length]);
+  const activeLayout = useMemo(() => buildClusteredLayout(active, ROOM_SIZE), [active]);
+  const idleLayout = useMemo(() => buildClusteredLayout(idle, ROOM_SIZE), [idle]);
 
   const targetById = useMemo(() => {
     const map = new Map<string, [number, number, number]>();
-    active.forEach((s, i) => {
-      const p = activePos[i];
-      map.set(s.sessionId, [p[0] + -ROOM_OFFSET, FLOOR_Y, p[2]]);
-    });
-    idle.forEach((s, i) => {
-      const p = idlePos[i];
-      map.set(s.sessionId, [p[0] + ROOM_OFFSET, FLOOR_Y, p[2]]);
-    });
+    for (const [sessionId, p] of activeLayout.positions) {
+      map.set(sessionId, [p[0] - ROOM_OFFSET, FLOOR_Y, p[2]]);
+    }
+    for (const [sessionId, p] of idleLayout.positions) {
+      map.set(sessionId, [p[0] + ROOM_OFFSET, FLOOR_Y, p[2]]);
+    }
     return map;
-  }, [active, idle, activePos, idlePos]);
+  }, [activeLayout, idleLayout]);
 
   return (
     <>
+      {/* Cluster floor labels */}
+      {activeLayout.clusters.map((c) => (
+        <ClusterLabel
+          key={'a-' + c.projectName}
+          position={[c.center[0] - ROOM_OFFSET, FLOOR_Y - 0.65, c.center[2] + c.radius + 0.5]}
+          label={c.projectName}
+          color="#ff8c1a"
+        />
+      ))}
+      {idleLayout.clusters.map((c) => (
+        <ClusterLabel
+          key={'i-' + c.projectName}
+          position={[c.center[0] + ROOM_OFFSET, FLOOR_Y - 0.65, c.center[2] + c.radius + 0.5]}
+          label={c.projectName}
+          color="#5a8fff"
+        />
+      ))}
+
       {visible.map((s) => {
-        const target = targetById.get(s.sessionId)!;
+        const target = targetById.get(s.sessionId);
+        if (!target) return null;
         const subs = (s.subagents || []).slice(0, 5);
+        const bubble = bubbles[s.sessionId];
         return (
           <WalkingAgent
             key={s.sessionId}
@@ -219,10 +239,38 @@ function AgentWorld({
             pulse={pulses[s.sessionId] || 0}
             onClick={() => onSelect(s.sessionId)}
             subs={subs}
+            bubbleText={bubble?.text || null}
+            bubbleKey={bubble?.key || 0}
           />
         );
       })}
     </>
+  );
+}
+
+function ClusterLabel({
+  position,
+  label,
+  color,
+}: {
+  position: [number, number, number];
+  label: string;
+  color: string;
+}) {
+  return (
+    <Text
+      position={position}
+      rotation={[-Math.PI / 2, 0, 0]}
+      fontSize={0.22}
+      color={color}
+      anchorX="center"
+      anchorY="middle"
+      letterSpacing={0.08}
+      outlineWidth={0.008}
+      outlineColor="#000"
+    >
+      {label.length > 22 ? label.slice(0, 21) + '…' : label}
+    </Text>
   );
 }
 
@@ -233,6 +281,8 @@ function WalkingAgent({
   pulse,
   onClick,
   subs,
+  bubbleText,
+  bubbleKey,
 }: {
   target: [number, number, number];
   session: Session;
@@ -240,6 +290,8 @@ function WalkingAgent({
   pulse: number;
   onClick: () => void;
   subs: Session['subagents'];
+  bubbleText: string | null;
+  bubbleKey: number;
 }) {
   const groupRef = useRef<THREE.Group>(null);
   const initialized = useRef(false);
@@ -272,14 +324,17 @@ function WalkingAgent({
       <VoxelAgent
         position={[0, 0.85, 0]}
         sessionId={session.sessionId}
-        projectName={session.projectName}
+        projectName={session.label || session.projectName}
         model={session.model}
         status={session.status === 'active' ? 'active' : 'idle'}
         selected={selected}
         pulse={pulse}
         onClick={onClick}
         subagentBadge={subs.length}
-        lastEventLabel={formatLastEvent(session)}
+        lastEventLabel={session.currentTask || formatLastEvent(session)}
+        bubbleText={bubbleText}
+        bubbleKey={bubbleKey}
+        externalKind={session.isExternal ? session.externalKind : null}
       />
       {subs.map((sub, j) => (
         <VoxelSubagent
@@ -295,22 +350,58 @@ function WalkingAgent({
   );
 }
 
-function layoutAgents(count: number, roomSize: [number, number, number]): [number, number, number][] {
-  if (count === 0) return [];
-  const [w, , d] = roomSize;
-  const cols = Math.ceil(Math.sqrt(count));
-  const rows = Math.ceil(count / cols);
-  const xStep = (w * 0.7) / Math.max(cols, 1);
-  const zStep = (d * 0.7) / Math.max(rows, 1);
-  const positions: [number, number, number][] = [];
-  for (let i = 0; i < count; i++) {
-    const r = Math.floor(i / cols);
-    const c = i % cols;
-    const x = (c - (cols - 1) / 2) * xStep;
-    const z = (r - (rows - 1) / 2) * zStep;
-    positions.push([x, 0, z]);
+// Cluster layout: group sessions by projectName, each cluster is a small grid
+// laid out across the room floor.
+function buildClusteredLayout(sessions: Session[], roomSize: [number, number, number]) {
+  const positions = new Map<string, [number, number, number]>();
+  const clusters: { projectName: string; center: [number, number, number]; radius: number }[] = [];
+  if (!sessions.length) return { positions, clusters };
+
+  const groups = new Map<string, Session[]>();
+  for (const s of sessions) {
+    const key = s.projectName || 'unknown';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(s);
   }
-  return positions;
+  const groupKeys = [...groups.keys()].sort();
+  const [w, , d] = roomSize;
+  const padding = 1.4;
+  const usableW = w * 0.78;
+  const usableD = d * 0.7;
+
+  // Place groups in a coarse grid
+  const gCols = Math.ceil(Math.sqrt(groupKeys.length));
+  const gRows = Math.ceil(groupKeys.length / gCols);
+  const cellW = usableW / Math.max(gCols, 1);
+  const cellD = usableD / Math.max(gRows, 1);
+
+  groupKeys.forEach((projectName, gi) => {
+    const gr = Math.floor(gi / gCols);
+    const gc = gi % gCols;
+    const cx = (gc - (gCols - 1) / 2) * cellW;
+    const cz = (gr - (gRows - 1) / 2) * cellD;
+    const members = groups.get(projectName)!;
+    const cols = Math.ceil(Math.sqrt(members.length));
+    const rows = Math.ceil(members.length / cols);
+    const innerW = Math.min(cellW - padding, cols * 1.4);
+    const innerD = Math.min(cellD - padding, rows * 1.4);
+    const xStep = innerW / Math.max(cols - 1, 1);
+    const zStep = innerD / Math.max(rows - 1, 1);
+
+    let maxR = 0;
+    members.forEach((s, i) => {
+      const r = Math.floor(i / cols);
+      const c = i % cols;
+      const x = cx + (cols === 1 ? 0 : (c - (cols - 1) / 2) * xStep);
+      const z = cz + (rows === 1 ? 0 : (r - (rows - 1) / 2) * zStep);
+      positions.set(s.sessionId, [x, 0, z]);
+      const distFromCenter = Math.sqrt((x - cx) ** 2 + (z - cz) ** 2);
+      if (distFromCenter > maxR) maxR = distFromCenter;
+    });
+    clusters.push({ projectName, center: [cx, 0, cz], radius: Math.max(maxR, 0.6) });
+  });
+
+  return { positions, clusters };
 }
 
 function formatLastEvent(s: Session): string {

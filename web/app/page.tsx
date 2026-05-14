@@ -14,14 +14,36 @@ export default function Page() {
   const { enabled: notifyEnabled, toggle: toggleNotify, permission } = useNotifications();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pulses, setPulses] = useState<Record<string, number>>({});
+  const [bubbles, setBubbles] = useState<Record<string, { text: string; key: number }>>({});
   const [camMode, setCamMode] = useState<CamMode>('orbit');
   const [showHelp, setShowHelp] = useState(false);
+  const [search, setSearch] = useState('');
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const lastStatusRef = useRef<Record<string, string>>({});
+  const bubbleCounter = useRef(0);
 
-  const visibleSessions = useMemo(
+  const activeAndIdle = useMemo(
     () => sessions.filter((s) => s.status === 'active' || s.status === 'idle'),
     [sessions],
   );
+
+  const visibleSessions = useMemo(() => {
+    if (!search.trim()) return activeAndIdle;
+    const q = search.toLowerCase();
+    return activeAndIdle.filter((s) => {
+      return (
+        (s.projectName || '').toLowerCase().includes(q) ||
+        (s.sessionId || '').toLowerCase().includes(q) ||
+        (s.model || '').toLowerCase().includes(q) ||
+        (s.label || '').toLowerCase().includes(q) ||
+        (s.externalKind || '').toLowerCase().includes(q) ||
+        (s.lastToolCall?.name || '').toLowerCase().includes(q) ||
+        (s.lastToolCall?.description || '').toLowerCase().includes(q) ||
+        (s.currentTask || '').toLowerCase().includes(q)
+      );
+    });
+  }, [activeAndIdle, search]);
 
   const selectedSession = useMemo(
     () => visibleSessions.find((s) => s.sessionId === selectedId) || null,
@@ -42,10 +64,24 @@ export default function Page() {
   useEffect(() => {
     onEvent((e: LogEntry) => {
       const targetId = e.parentSessionId || e.sessionId;
-      setPulses((prev) => ({
-        ...prev,
-        [targetId]: (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000,
-      }));
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      setPulses((prev) => ({ ...prev, [targetId]: now }));
+
+      // Build a speech bubble text from the event
+      let text: string | null = null;
+      if (e.summary) {
+        if (e.summary.kind === 'tool_use') {
+          const desc = (e.summary.description || '').slice(0, 28);
+          text = desc ? `${e.summary.name}: ${desc}` : `${e.summary.name}`;
+        } else if (e.summary.kind === 'text' && e.summary.text) {
+          text = String(e.summary.text).slice(0, 40);
+        }
+      }
+      if (text) {
+        bubbleCounter.current += 1;
+        const key = bubbleCounter.current;
+        setBubbles((prev) => ({ ...prev, [targetId]: { text: text!, key } }));
+      }
     });
   }, [onEvent]);
 
@@ -77,18 +113,31 @@ export default function Page() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        if (e.key === 'Escape') {
+          (e.target as HTMLElement).blur();
+          if (searchOpen) setSearchOpen(false);
+        }
+        return;
+      }
+      if (e.key === '/') {
+        e.preventDefault();
+        setSearchOpen(true);
+        setTimeout(() => searchInputRef.current?.focus(), 50);
+        return;
+      }
       if (e.key === 'f' || e.key === 'F') setCamMode((m) => (m === 'fly' ? 'orbit' : 'fly'));
       if (e.key === 'g' || e.key === 'G') setCamMode((m) => (m === 'walk' ? 'orbit' : 'walk'));
       if (e.key === '?' || e.key === 'h' || e.key === 'H') setShowHelp((v) => !v);
       if (e.key === 'Escape') {
         if (selectedId) setSelectedId(null);
+        else if (searchOpen) { setSearchOpen(false); setSearch(''); }
         else if (camMode !== 'orbit') setCamMode('orbit');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedId, camMode]);
+  }, [selectedId, camMode, searchOpen]);
 
   return (
     <main style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -97,6 +146,7 @@ export default function Page() {
         selectedId={selectedId}
         onSelect={setSelectedId}
         pulses={pulses}
+        bubbles={bubbles}
         camMode={camMode}
       />
       <div className="hud">
@@ -106,46 +156,55 @@ export default function Page() {
             <span className="pill active">● {counts.active} active</span>
             <span className="pill idle">◐ {counts.idle} idle</span>
 
-            <div className="cam-toggle" role="tablist">
-              <button
-                className={`cam-btn ${camMode === 'orbit' ? 'on' : ''}`}
-                onClick={() => setCamMode('orbit')}
-                title="Orbit camera (default)"
-              >🌐 Orbit</button>
-              <button
-                className={`cam-btn ${camMode === 'fly' ? 'on' : ''}`}
-                onClick={() => setCamMode('fly')}
-                title="Free fly (F)"
-              >🚁 Fly</button>
-              <button
-                className={`cam-btn ${camMode === 'walk' ? 'on' : ''}`}
-                onClick={() => setCamMode('walk')}
-                title="Walk in first-person (G)"
-              >🚶 Walk</button>
+            <div className="cam-toggle">
+              <button className={`cam-btn ${camMode === 'orbit' ? 'on' : ''}`} onClick={() => setCamMode('orbit')} title="Orbit camera">🌐 Orbit</button>
+              <button className={`cam-btn ${camMode === 'fly' ? 'on' : ''}`} onClick={() => setCamMode('fly')} title="Free fly (F)">🚁 Fly</button>
+              <button className={`cam-btn ${camMode === 'walk' ? 'on' : ''}`} onClick={() => setCamMode('walk')} title="First-person walk (G)">🚶 Walk</button>
             </div>
+
+            <button
+              className={`notif-btn ${searchOpen ? 'on' : ''}`}
+              onClick={() => { setSearchOpen((v) => !v); setTimeout(() => searchInputRef.current?.focus(), 50); }}
+              title="Search agents (/)"
+            >🔍</button>
 
             <button
               className={`notif-btn ${notifyEnabled ? 'on' : ''}`}
               onClick={toggleNotify}
-              title={permission === 'denied' ? 'Permission denied — change in browser settings' : 'Toggle desktop notifications'}
+              title={permission === 'denied' ? 'Permission denied' : 'Toggle desktop notifications'}
             >
               <span className="dot" />
               {notifyEnabled ? 'Notifications ON' : permission === 'denied' ? 'Notifications BLOCKED' : 'Enable Notifications'}
             </button>
-            <button
-              className="notif-btn"
-              onClick={() => setShowHelp((v) => !v)}
-              title="Show controls (H)"
-            >?</button>
+            <button className="notif-btn" onClick={() => setShowHelp((v) => !v)} title="Show controls (H)">?</button>
           </div>
         </div>
+
+        {searchOpen && (
+          <div className="search-bar">
+            <input
+              ref={searchInputRef}
+              type="text"
+              placeholder="Search by project, model, tool, task… (ESC to close)"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+            {search && (
+              <span className="search-count">
+                {visibleSessions.length} / {activeAndIdle.length}
+              </span>
+            )}
+          </div>
+        )}
 
         <div className={`connection ${connected ? 'connected' : 'disconnected'}`}>
           {connected ? 'WebSocket connected · localhost:3435' : 'Reconnecting…'}
         </div>
 
         {visibleSessions.length === 0 && (
-          <div className="empty-state">No active or idle sessions — start a Claude Code session</div>
+          <div className="empty-state">
+            {search ? 'No matches for your search' : 'No active or idle sessions'}
+          </div>
         )}
 
         {showHelp && (
@@ -156,27 +215,38 @@ export default function Page() {
                 <h3>Cam modes</h3>
                 <ul>
                   <li>🌐 <b>Orbit</b> — drag to rotate, scroll to zoom (default)</li>
-                  <li>🚁 <b>Fly</b> (<kbd>F</kbd>) — WASD to move, drag to look, scroll to zoom forward, Space/Q up/down</li>
-                  <li>🚶 <b>Walk</b> (<kbd>G</kbd>) — first-person ground walking, WASD, drag to look, Space to jump, Shift to sprint</li>
+                  <li>🚁 <b>Fly</b> (<kbd>F</kbd>) — WASD to move, drag to look, scroll = forward, Space/Q up/down</li>
+                  <li>🚶 <b>Walk</b> (<kbd>G</kbd>) — first-person ground walk, WASD, Space jump, Shift sprint</li>
                 </ul>
               </div>
               <div className="help-section">
                 <h3>Interaction</h3>
                 <ul>
                   <li>Click any character — open live event log</li>
-                  <li><kbd>ESC</kbd> — close panel / back to orbit cam</li>
+                  <li><kbd>/</kbd> — search agents</li>
+                  <li><kbd>ESC</kbd> — close panel / search / back to orbit</li>
                   <li><kbd>H</kbd> / <kbd>?</kbd> — toggle this help</li>
                 </ul>
               </div>
               <div className="help-section">
                 <h3>What you see</h3>
                 <ul>
-                  <li>Each character = one Claude Code session</li>
-                  <li>Skin color is unique per session ID (deterministic)</li>
+                  <li>Each character = one Claude Code session OR external agent</li>
+                  <li>Sessions cluster by project (same project = same area)</li>
+                  <li>Floor label below each cluster shows the project name</li>
+                  <li>Skin color is unique per session (deterministic)</li>
                   <li>Hat = model: 👑 Opus · 🧢 Sonnet · 🟢 Haiku</li>
-                  <li>Purple satellites = subagents</li>
-                  <li>Glow pulse = a tool call just fired</li>
-                  <li>Walks to the other room when status flips</li>
+                  <li>External agents have their kind as hat (Marketing/Code/Review/…)</li>
+                  <li>Speech bubble pops on tool calls</li>
+                  <li>Walks to other room when status flips</li>
+                </ul>
+              </div>
+              <div className="help-section">
+                <h3>External Agents</h3>
+                <ul>
+                  <li>POST <code>http://localhost:3435/external/upsert</code></li>
+                  <li>POST <code>http://localhost:3435/external/event</code></li>
+                  <li>See <code>AGENTS.md</code> for full schema + example</li>
                 </ul>
               </div>
               <div className="help-footer">click anywhere to close</div>
@@ -185,14 +255,10 @@ export default function Page() {
         )}
 
         {camMode === 'fly' && !showHelp && (
-          <div className="freecam-hint">
-            🚁 Fly · WASD walk · drag to look · scroll = forward · Space/Q up/down · Shift sprint · ESC exit
-          </div>
+          <div className="freecam-hint">🚁 Fly · WASD walk · drag to look · scroll = forward · Space/Q up/down · Shift sprint · ESC exit</div>
         )}
         {camMode === 'walk' && !showHelp && (
-          <div className="freecam-hint">
-            🚶 Walk · WASD move · drag to look · Space jump · Shift sprint · click an agent to open · ESC exit
-          </div>
+          <div className="freecam-hint">🚶 Walk · WASD move · drag to look · Space jump · Shift sprint · click an agent · ESC exit</div>
         )}
 
         <SidePanel session={selectedSession} logs={selectedLogs} onClose={() => setSelectedId(null)} />
