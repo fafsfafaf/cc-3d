@@ -1,0 +1,18 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+*.log
+.DS_Store
+.env
+.env.local
+.vscode/
+.idea/
+
+# Build artifacts
+web/.next/
+web/node_modules/
+
+# Lockfiles strategy: keep root, ignore web (next build will create one)
+# (uncomment if needed)

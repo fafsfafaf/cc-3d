@@ -1,0 +1,26 @@
+{
+  "name": "cc-3d",
+  "version": "1.0.0",
+  "description": "3D web dashboard for live Claude Code session monitoring",
+  "type": "module",
+  "bin": {
+    "cc-3d": "./bin/cc-3d.mjs"
+  },
+  "scripts": {
+    "start": "node bin/cc-3d.mjs",
+    "server": "node server/index.mjs",
+    "web:dev": "cd web && next dev -p 3434",
+    "web:build": "cd web && next build",
+    "web:start": "cd web && next start -p 3434"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "chokidar": "^3.6.0",
+    "ws": "^8.18.0",
+    "open": "^10.1.0"
+  },
+  "license": "MIT",
+  "private": true
+}
