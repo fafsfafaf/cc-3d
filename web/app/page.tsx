@@ -7,12 +7,14 @@ import SidePanel from '@/components/SidePanel';
 
 const Scene = dynamic(() => import('@/components/Scene'), { ssr: false });
 
+type CamMode = 'orbit' | 'fly' | 'walk';
+
 export default function Page() {
   const { sessions, connected, logs, onEvent } = useSessions();
   const { enabled: notifyEnabled, toggle: toggleNotify, permission } = useNotifications();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pulses, setPulses] = useState<Record<string, number>>({});
-  const [freeCam, setFreeCam] = useState(false);
+  const [camMode, setCamMode] = useState<CamMode>('orbit');
   const [showHelp, setShowHelp] = useState(false);
   const lastStatusRef = useRef<Record<string, string>>({});
 
@@ -76,16 +78,17 @@ export default function Page() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-      if (e.key === 'f' || e.key === 'F') setFreeCam((v) => !v);
-      if (e.key === '?' || e.key === 'h') setShowHelp((v) => !v);
+      if (e.key === 'f' || e.key === 'F') setCamMode((m) => (m === 'fly' ? 'orbit' : 'fly'));
+      if (e.key === 'g' || e.key === 'G') setCamMode((m) => (m === 'walk' ? 'orbit' : 'walk'));
+      if (e.key === '?' || e.key === 'h' || e.key === 'H') setShowHelp((v) => !v);
       if (e.key === 'Escape') {
         if (selectedId) setSelectedId(null);
-        else if (freeCam) setFreeCam(false);
+        else if (camMode !== 'orbit') setCamMode('orbit');
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedId, freeCam]);
+  }, [selectedId, camMode]);
 
   return (
     <main style={{ width: '100vw', height: '100vh', position: 'relative' }}>
@@ -94,7 +97,7 @@ export default function Page() {
         selectedId={selectedId}
         onSelect={setSelectedId}
         pulses={pulses}
-        freeCam={freeCam}
+        camMode={camMode}
       />
       <div className="hud">
         <div className="toolbar">
@@ -102,14 +105,25 @@ export default function Page() {
           <div className="meta">
             <span className="pill active">● {counts.active} active</span>
             <span className="pill idle">◐ {counts.idle} idle</span>
-            <button
-              className={`notif-btn ${freeCam ? 'on' : ''}`}
-              onClick={() => setFreeCam((v) => !v)}
-              title="Toggle free camera mode (F)"
-            >
-              <span className="dot" />
-              {freeCam ? 'Free Cam ON' : 'Free Cam'}
-            </button>
+
+            <div className="cam-toggle" role="tablist">
+              <button
+                className={`cam-btn ${camMode === 'orbit' ? 'on' : ''}`}
+                onClick={() => setCamMode('orbit')}
+                title="Orbit camera (default)"
+              >🌐 Orbit</button>
+              <button
+                className={`cam-btn ${camMode === 'fly' ? 'on' : ''}`}
+                onClick={() => setCamMode('fly')}
+                title="Free fly (F)"
+              >🚁 Fly</button>
+              <button
+                className={`cam-btn ${camMode === 'walk' ? 'on' : ''}`}
+                onClick={() => setCamMode('walk')}
+                title="Walk in first-person (G)"
+              >🚶 Walk</button>
+            </div>
+
             <button
               className={`notif-btn ${notifyEnabled ? 'on' : ''}`}
               onClick={toggleNotify}
@@ -122,9 +136,7 @@ export default function Page() {
               className="notif-btn"
               onClick={() => setShowHelp((v) => !v)}
               title="Show controls (H)"
-            >
-              ?
-            </button>
+            >?</button>
           </div>
         </div>
 
@@ -141,30 +153,30 @@ export default function Page() {
             <div className="help-card" onClick={(e) => e.stopPropagation()}>
               <h2>Controls</h2>
               <div className="help-section">
-                <h3>Orbit Camera (default)</h3>
+                <h3>Cam modes</h3>
                 <ul>
-                  <li><kbd>Drag</kbd> — rotate around scene</li>
-                  <li><kbd>Right-Drag</kbd> — pan</li>
-                  <li><kbd>Scroll</kbd> — zoom</li>
-                </ul>
-              </div>
-              <div className="help-section">
-                <h3>Free Camera (press F to toggle)</h3>
-                <ul>
-                  <li><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> — walk</li>
-                  <li><kbd>Drag</kbd> — look around</li>
-                  <li><kbd>Space</kbd> / <kbd>E</kbd> — up</li>
-                  <li><kbd>Q</kbd> / <kbd>Ctrl</kbd> — down</li>
-                  <li><kbd>Shift</kbd> — sprint</li>
+                  <li>🌐 <b>Orbit</b> — drag to rotate, scroll to zoom (default)</li>
+                  <li>🚁 <b>Fly</b> (<kbd>F</kbd>) — WASD to move, drag to look, scroll to zoom forward, Space/Q up/down</li>
+                  <li>🚶 <b>Walk</b> (<kbd>G</kbd>) — first-person ground walking, WASD, drag to look, Space to jump, Shift to sprint</li>
                 </ul>
               </div>
               <div className="help-section">
                 <h3>Interaction</h3>
                 <ul>
                   <li>Click any character — open live event log</li>
-                  <li><kbd>ESC</kbd> — close panel / exit free cam</li>
-                  <li><kbd>F</kbd> — toggle free camera</li>
+                  <li><kbd>ESC</kbd> — close panel / back to orbit cam</li>
                   <li><kbd>H</kbd> / <kbd>?</kbd> — toggle this help</li>
+                </ul>
+              </div>
+              <div className="help-section">
+                <h3>What you see</h3>
+                <ul>
+                  <li>Each character = one Claude Code session</li>
+                  <li>Skin color is unique per session ID (deterministic)</li>
+                  <li>Hat = model: 👑 Opus · 🧢 Sonnet · 🟢 Haiku</li>
+                  <li>Purple satellites = subagents</li>
+                  <li>Glow pulse = a tool call just fired</li>
+                  <li>Walks to the other room when status flips</li>
                 </ul>
               </div>
               <div className="help-footer">click anywhere to close</div>
@@ -172,9 +184,14 @@ export default function Page() {
           </div>
         )}
 
-        {freeCam && !showHelp && (
+        {camMode === 'fly' && !showHelp && (
           <div className="freecam-hint">
-            Free Cam · WASD walk · drag to look · Space/Q up/down · Shift sprint · ESC exit
+            🚁 Fly · WASD walk · drag to look · scroll = forward · Space/Q up/down · Shift sprint · ESC exit
+          </div>
+        )}
+        {camMode === 'walk' && !showHelp && (
+          <div className="freecam-hint">
+            🚶 Walk · WASD move · drag to look · Space jump · Shift sprint · click an agent to open · ESC exit
           </div>
         )}
 

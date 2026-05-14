@@ -70,6 +70,27 @@ canvas { display: block; outline: none; }
 }
 .notif-btn:hover { border-color: rgba(255, 179, 71, 0.5); color: #ffb347; }
 .notif-btn.on { color: #6cffb0; border-color: rgba(108, 255, 176, 0.45); background: rgba(20, 40, 30, 0.6); }
+
+.cam-toggle {
+  display: inline-flex;
+  border: 1px solid rgba(120, 160, 220, 0.25);
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(15, 22, 36, 0.85);
+}
+.cam-btn {
+  background: transparent;
+  border: none;
+  color: #cdd9ec;
+  font-size: 12px;
+  padding: 7px 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  font-weight: 500;
+}
+.cam-btn:hover { background: rgba(255, 179, 71, 0.1); color: #ffb347; }
+.cam-btn.on { background: rgba(255, 179, 71, 0.18); color: #ffb347; }
+.cam-btn + .cam-btn { border-left: 1px solid rgba(120, 160, 220, 0.18); }
 .notif-btn .dot {
   width: 8px; height: 8px; border-radius: 999px;
   background: currentColor;

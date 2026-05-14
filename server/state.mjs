@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import { projectName } from './format.mjs';
 
-const ACTIVE_THRESHOLD_MS = 5_000;
-const IDLE_THRESHOLD_MS = 2 * 60_000;
+const ACTIVE_THRESHOLD_MS = 15_000;
+const IDLE_THRESHOLD_MS = 3 * 60_000;
 
 export class SessionRegistry extends EventEmitter {
   constructor() {
