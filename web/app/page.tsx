@@ -16,6 +16,7 @@ export default function Page() {
   const [pulses, setPulses] = useState<Record<string, number>>({});
   const [bubbles, setBubbles] = useState<Record<string, { text: string; key: number }>>({});
   const [camMode, setCamMode] = useState<CamMode>('orbit');
+  const [whipEquipped, setWhipEquipped] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [search, setSearch] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
@@ -128,6 +129,7 @@ export default function Page() {
       }
       if (e.key === 'f' || e.key === 'F') setCamMode((m) => (m === 'fly' ? 'orbit' : 'fly'));
       if (e.key === 'g' || e.key === 'G') setCamMode((m) => (m === 'walk' ? 'orbit' : 'walk'));
+      if (e.key === 't' || e.key === 'T') setWhipEquipped((v) => !v);
       if (e.key === '?' || e.key === 'h' || e.key === 'H') setShowHelp((v) => !v);
       if (e.key === 'Escape') {
         if (selectedId) setSelectedId(null);
@@ -148,6 +150,7 @@ export default function Page() {
         pulses={pulses}
         bubbles={bubbles}
         camMode={camMode}
+        whipEquipped={whipEquipped && camMode === 'walk'}
       />
       <div className="hud">
         <div className="toolbar">
@@ -161,6 +164,16 @@ export default function Page() {
               <button className={`cam-btn ${camMode === 'fly' ? 'on' : ''}`} onClick={() => setCamMode('fly')} title="Free fly (F)">🚁 Fly</button>
               <button className={`cam-btn ${camMode === 'walk' ? 'on' : ''}`} onClick={() => setCamMode('walk')} title="First-person walk (G)">🚶 Walk</button>
             </div>
+
+            {camMode === 'walk' && (
+              <button
+                className={`notif-btn ${whipEquipped ? 'on' : ''}`}
+                onClick={() => setWhipEquipped((v) => !v)}
+                title="Equip / unequip whip (T) — click in scene to crack"
+              >
+                🪢 {whipEquipped ? 'Whip equipped' : 'Equip whip'}
+              </button>
+            )}
 
             <button
               className={`notif-btn ${searchOpen ? 'on' : ''}`}
@@ -224,6 +237,8 @@ export default function Page() {
                 <ul>
                   <li>Click any character — open live event log</li>
                   <li><kbd>/</kbd> — search agents</li>
+                  <li><kbd>T</kbd> — equip / unequip whip (walk mode only)</li>
+                  <li>Click in walk mode with whip equipped → crack + sound</li>
                   <li><kbd>ESC</kbd> — close panel / search / back to orbit</li>
                   <li><kbd>H</kbd> / <kbd>?</kbd> — toggle this help</li>
                 </ul>

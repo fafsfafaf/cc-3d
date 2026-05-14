@@ -18,13 +18,14 @@ type Props = {
   pulses: Record<string, number>;
   bubbles: Record<string, { text: string; key: number }>;
   camMode: CamMode;
+  whipEquipped: boolean;
 };
 
 const ROOM_SIZE: [number, number, number] = [16, 8, 14];
 const ROOM_OFFSET = 11;
 const FLOOR_Y = -3.18;
 
-export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles, camMode }: Props) {
+export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles, camMode, whipEquipped }: Props) {
   return (
     <Canvas
       shadows={false}
@@ -92,7 +93,7 @@ export default function Scene({ sessions, selectedId, onSelect, pulses, bubbles,
         />
       )}
       {camMode !== 'orbit' && <FreeCameraControls enabled={true} walkMode={camMode === 'walk'} />}
-      <HandViewModel enabled={camMode === 'walk'} />
+      <HandViewModel enabled={camMode === 'walk'} whipEquipped={whipEquipped} />
     </Canvas>
   );
 }
@@ -162,6 +163,36 @@ function Room({
         letterSpacing={0.22}
         outlineWidth={0.012}
         outlineColor="#000"
+      >
+        {label}
+      </Text>
+
+      {/* Big wall sign on the back wall */}
+      <Text
+        position={[0, h / 2 - 1.4, -d / 2 + 0.02]}
+        fontSize={1.0}
+        color={accentColor}
+        anchorX="center"
+        anchorY="middle"
+        letterSpacing={0.18}
+        outlineWidth={0.025}
+        outlineColor="#000"
+        maxWidth={w * 0.9}
+      >
+        {label}
+      </Text>
+      {/* Outer side wall sign */}
+      <Text
+        position={[isLeft ? -w / 2 + 0.02 : w / 2 - 0.02, h / 2 - 1.4, 0]}
+        rotation={[0, isLeft ? Math.PI / 2 : -Math.PI / 2, 0]}
+        fontSize={0.85}
+        color={accentColor}
+        anchorX="center"
+        anchorY="middle"
+        letterSpacing={0.16}
+        outlineWidth={0.022}
+        outlineColor="#000"
+        maxWidth={d * 0.9}
       >
         {label}
       </Text>

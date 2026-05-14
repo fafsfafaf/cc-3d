@@ -37,8 +37,12 @@ export default function FreeCameraControls({ enabled, walkMode = false }: Props)
     }
 
     if (walkMode) {
-      // Snap to floor + eye height when entering walk mode
-      camera.position.y = FLOOR_Y + EYE_HEIGHT;
+      // Spawn at a safe position in the middle bridge area, looking at the rooms
+      camera.position.set(0, FLOOR_Y + EYE_HEIGHT, 5);
+      yaw.current = Math.PI; // face -Z (toward back walls / labels)
+      pitch.current = 0;
+      const e = new THREE.Euler(pitch.current, yaw.current, 0, 'YXZ');
+      camera.quaternion.setFromEuler(e);
     }
 
     const dom = gl.domElement;
