@@ -8,25 +8,26 @@ type Props = {
   whipEquipped: boolean;
 };
 
-// First-person hand. Optionally equipped with a whip (toggle in the HUD).
+const ROPE_SEGMENTS = 16;
+
+// First-person hand. Optionally equipped with a thick voxel-style lasso/whip.
 export default function HandViewModel({ enabled, whipEquipped }: Props) {
   const handRef = useRef<THREE.Group>(null);
-  const whipGroupRef = useRef<THREE.Group>(null);
-  const ropeMatRef = useRef<THREE.LineBasicMaterial>(null);
-  const tipRef = useRef<THREE.Mesh>(null);
+  const ropeRef = useRef<THREE.Mesh>(null);
+  const lassoRef = useRef<THREE.Mesh>(null);
+  const tipFlashRef = useRef<THREE.Mesh>(null);
   const crackUntil = useRef(0);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const { camera, gl } = useThree();
 
-  const segments = 24;
-  const ropePoints = useMemo(() => {
-    const arr: THREE.Vector3[] = [];
-    for (let i = 0; i <= segments; i++) arr.push(new THREE.Vector3());
-    return arr;
+  // Reusable curve we update every frame
+  const curve = useMemo(() => {
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= ROPE_SEGMENTS; i++) points.push(new THREE.Vector3());
+    return new THREE.CatmullRomCurve3(points);
   }, []);
-  const ropeGeom = useMemo(() => new THREE.BufferGeometry().setFromPoints(ropePoints), [ropePoints]);
 
-  // Whip-crack sound + click handler — only when whip equipped
+  // Whip-crack sound (only when whip equipped)
   useEffect(() => {
     if (!enabled || !whipEquipped) return;
     const playWhipCrack = () => {
@@ -96,49 +97,64 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
     g.position.copy(camera.position);
     g.quaternion.copy(camera.quaternion);
 
-    // Position: more centered + closer + slightly lower
+    // Hand offset bottom-right of view
     g.translateX(0.4);
     g.translateY(-0.45);
     g.translateZ(-0.7);
     g.rotateY(-0.16);
     g.rotateX(-0.12);
 
-    if (whipEquipped && whipGroupRef.current) {
+    if (whipEquipped && ropeRef.current) {
       const t = state.clock.elapsedTime;
       const crackT = Math.max(0, crackUntil.current - t);
       const cracking = crackT > 0;
       const phase = cracking ? 1 - crackT / 0.45 : 0;
 
-      const positions = ropeGeom.attributes.position;
+      // Compute curve points (relative to handle base at -0.85 below hand origin)
+      const points = curve.points;
       let tipX = 0, tipY = 0, tipZ = 0;
-      for (let i = 0; i <= segments; i++) {
-        const p = i / segments;
+      for (let i = 0; i <= ROPE_SEGMENTS; i++) {
+        const p = i / ROPE_SEGMENTS;
         let x: number, y: number, z: number;
         if (cracking) {
           const snap = Math.sin(phase * Math.PI);
           const angle = -1.4 - p * 1.5;
-          const radius = 0.4 + p * 1.6 + snap * 0.4 * p;
-          x = Math.sin(t * 22 + p * 12) * 0.04 * snap * p;
+          const radius = 0.5 + p * 1.8 + snap * 0.4 * p;
+          x = Math.sin(t * 22 + p * 12) * 0.05 * snap * p;
           y = -0.3 + Math.sin(angle) * radius * (snap * 0.7 + 0.3);
           z = Math.cos(angle) * radius * -1;
         } else {
-          x = 0;
-          y = -0.4 - p * 0.9 - Math.sin(t * 0.8 + p * 6) * 0.04 * (1 - p);
-          z = -p * 0.15 - Math.sin(t * 0.6 + p * 4) * 0.03 * (1 - p);
+          // Hangs forward + down with gentle sway
+          x = Math.sin(t * 0.6 + p * 3) * 0.03 * (1 - p);
+          y = -0.2 - p * p * 1.4 - Math.sin(t * 0.8 + p * 6) * 0.04 * (1 - p);
+          z = -p * 0.55 - Math.cos(t * 0.5 + p * 3) * 0.04 * (1 - p);
         }
-        positions.setXYZ(i, x, y, z);
-        if (i === segments) { tipX = x; tipY = y; tipZ = z; }
+        points[i].set(x, y, z);
+        if (i === ROPE_SEGMENTS) { tipX = x; tipY = y; tipZ = z; }
       }
-      positions.needsUpdate = true;
-      ropeGeom.computeBoundingSphere();
+      curve.updateArcLengths();
 
-      if (tipRef.current) {
-        tipRef.current.position.set(tipX, tipY, tipZ);
-        const flash = cracking && phase > 0.4 && phase < 0.55 ? 1 : 0;
-        (tipRef.current.material as THREE.MeshBasicMaterial).opacity = flash * 0.95;
-        tipRef.current.scale.setScalar(0.6 + flash * 1.5);
+      // Build a fresh tube geometry (cheap at 16 segments)
+      const tubeGeo = new THREE.TubeGeometry(curve, ROPE_SEGMENTS * 2, 0.03, 6, false);
+      ropeRef.current.geometry.dispose();
+      ropeRef.current.geometry = tubeGeo;
+
+      // Position the lasso loop at the tip
+      if (lassoRef.current) {
+        lassoRef.current.position.set(tipX, tipY - 0.08, tipZ);
+        lassoRef.current.rotation.x = -0.4 + Math.sin(t * 0.7) * 0.1;
+        lassoRef.current.rotation.z = Math.sin(t * 0.5) * 0.1;
+        const scl = cracking ? 0.7 + Math.sin(phase * Math.PI) * 0.5 : 1.0;
+        lassoRef.current.scale.setScalar(scl);
       }
-      if (ropeMatRef.current) ropeMatRef.current.opacity = cracking ? 1.0 : 0.95;
+
+      // Tip flash on crack
+      if (tipFlashRef.current) {
+        tipFlashRef.current.position.set(tipX, tipY, tipZ);
+        const flash = cracking && phase > 0.4 && phase < 0.55 ? 1 : 0;
+        (tipFlashRef.current.material as THREE.MeshBasicMaterial).opacity = flash * 0.95;
+        tipFlashRef.current.scale.setScalar(0.5 + flash * 1.5);
+      }
     }
   });
 
@@ -174,32 +190,42 @@ export default function HandViewModel({ enabled, whipEquipped }: Props) {
 
       {whipEquipped && (
         <>
-          {/* Whip handle */}
-          <mesh position={[0, -0.7, 0.05]}>
-            <boxGeometry args={[0.1, 0.32, 0.1]} />
+          {/* Whip handle (held in hand) */}
+          <mesh position={[0, -0.78, 0.08]} rotation={[0.4, 0, 0]}>
+            <cylinderGeometry args={[0.055, 0.045, 0.4, 8]} />
             <meshStandardMaterial color="#6b3e2a" roughness={0.6} flatShading depthTest={false} />
           </mesh>
-          <mesh position={[0, -0.8, 0.06]}>
-            <boxGeometry args={[0.11, 0.04, 0.11]} />
+          {/* Handle wraps */}
+          <mesh position={[0, -0.7, 0.05]} rotation={[0.4, 0, 0]}>
+            <cylinderGeometry args={[0.062, 0.062, 0.04, 8]} />
             <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
           </mesh>
-          <mesh position={[0, -0.7, 0.06]}>
-            <boxGeometry args={[0.11, 0.04, 0.11]} />
+          <mesh position={[0, -0.85, 0.12]} rotation={[0.4, 0, 0]}>
+            <cylinderGeometry args={[0.062, 0.062, 0.04, 8]} />
             <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
           </mesh>
-          <mesh position={[0, -0.92, 0.05]}>
-            <boxGeometry args={[0.12, 0.06, 0.12]} />
-            <meshStandardMaterial color="#caa078" roughness={0.5} flatShading depthTest={false} />
+          {/* Pommel (golden ball at handle end) */}
+          <mesh position={[0, -0.62, 0.02]}>
+            <sphereGeometry args={[0.07, 12, 12]} />
+            <meshStandardMaterial color="#d4a878" emissive="#d4a878" emissiveIntensity={0.2} roughness={0.4} flatShading depthTest={false} />
           </mesh>
 
-          {/* Whip rope */}
-          <group ref={whipGroupRef} position={[0, -0.85, 0.05]}>
-            <line>
-              <primitive attach="geometry" object={ropeGeom} />
-              <lineBasicMaterial ref={ropeMatRef} attach="material" color="#2a1810" linewidth={3} transparent opacity={0.95} depthTest={false} />
-            </line>
-            <mesh ref={tipRef} position={[0, 0, 0]} renderOrder={1000}>
-              <sphereGeometry args={[0.05, 8, 8]} />
+          {/* Whip rope — actual 3D tube (not a line!) */}
+          <group position={[0, -0.95, 0.15]}>
+            <mesh ref={ropeRef}>
+              <tubeGeometry args={[curve, ROPE_SEGMENTS * 2, 0.03, 6, false]} />
+              <meshStandardMaterial color="#3d2418" roughness={0.7} flatShading depthTest={false} />
+            </mesh>
+
+            {/* Lasso loop at the tip */}
+            <mesh ref={lassoRef} position={[0, -1.4, -0.5]}>
+              <torusGeometry args={[0.18, 0.025, 6, 20]} />
+              <meshStandardMaterial color="#4a2e1c" roughness={0.7} flatShading depthTest={false} />
+            </mesh>
+
+            {/* Tip flash (only visible during crack) */}
+            <mesh ref={tipFlashRef} position={[0, 0, 0]}>
+              <sphereGeometry args={[0.06, 8, 8]} />
               <meshBasicMaterial color="#ffffff" transparent opacity={0} depthTest={false} />
             </mesh>
           </group>
